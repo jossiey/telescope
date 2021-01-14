@@ -1,15 +1,28 @@
+const {
+  ELASTIC_URL,
+  ELASTIC_PORT,
+  INDEX_NAME,
+  ELASTIC_VERSION,
+  FLUSH_BYTES,
+  CONSISTENCY,
+  LOG_ELASTIC,
+  LOG_LEVEL,
+  NODE_ENV,
+} = process.env;
 const pino = require('pino');
+const pinoElastic = require('pino-elasticsearch');
 const expressPino = require('express-pino-logger');
 const os = require('os');
 const path = require('path');
+const parseUrl = require('./url-parser');
 
 require('../lib/config');
 
 // Deal with log levels we don't know, or which are incorrectly formatted
-let logLevel = (process.env.LOG_LEVEL || 'info').toLowerCase();
+let logLevel = (LOG_LEVEL || 'info').toLowerCase();
 if (!pino.levels.values[logLevel]) {
   // Use `debug` by default in development mode, `info` otherwise.
-  logLevel = process.env.NODE_ENV === 'development' ? 'debug' : 'info';
+  logLevel = NODE_ENV === 'development' ? 'debug' : 'info';
 }
 
 const options = {
@@ -32,7 +45,25 @@ if (process.env.LOG_FILE) {
   destination = pino.destination(process.stdout.fd);
 }
 
-const logger = pino(options, destination);
+const streamToElastic = pinoElastic({
+  // Name of the index the logs will be stored under
+  index: (INDEX_NAME || 'logs').toLowerCase(),
+  // Consistency of the write, valid values: 'one', 'quorum', 'all'
+  consistency: (CONSISTENCY || 'one').toLowerCase(),
+  // URL of Elasticsearch
+  node: parseUrl(ELASTIC_URL, ELASTIC_PORT) || 'http://127.0.0.1:9200',
+  // Elasticsearch version
+  'es-version': ELASTIC_VERSION || 7,
+  // The number of bytes for each bulk insert
+  'flush-bytes': FLUSH_BYTES || 1000,
+});
+
+// Unable to use options as argument in both cases because pino-elastic does not like prettyPrint
+const logger = pino(
+  LOG_ELASTIC ? { level: logLevel } : options,
+  LOG_ELASTIC ? streamToElastic : destination
+);
+
 const expressLogger = expressPino({ logger });
 
 module.exports = expressLogger;
